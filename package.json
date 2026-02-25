@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "ts-node src/index.ts",
+    "dev": "node dist/index.js",
     "watch": "tsc --watch"
   },
   "keywords": [

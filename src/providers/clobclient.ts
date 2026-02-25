@@ -4,6 +4,7 @@ import { Chain, ClobClient } from "@polymarket/clob-client";
 import type { ApiKeyCreds } from "@polymarket/clob-client";
 import { Wallet } from "@ethersproject/wallet";
 import { config } from "../utils/config";
+import { createCredential } from "../security/createCredential";
 
 // Cache for ClobClient instance to avoid repeated initialization
 let cachedClient: ClobClient | null = null;
@@ -13,13 +14,20 @@ let cachedConfig: { chainId: number; host: string } | null = null;
  * Initialize ClobClient from credentials (cached singleton)
  * Prevents creating multiple ClobClient instances
  * Following the pattern from sample repositories
+ * Automatically creates credentials if they don't exist
  */
 export async function getClobClient(): Promise<ClobClient> {
     // Load credentials
     const credentialPath = resolve(process.cwd(), "src/data/credential.json");
 
+    // Automatically create credentials if they don't exist
     if (!existsSync(credentialPath)) {
-        throw new Error("Credential file not found. Run createCredential() first.");
+        console.log("[INFO] Credential file not found. Creating credentials...");
+        const credential = await createCredential();
+        if (!credential) {
+            throw new Error("Failed to create credentials. Please check your PRIVATE_KEY environment variable.");
+        }
+        console.log("[INFO] Credentials created successfully.");
     }
 
     const creds: ApiKeyCreds = JSON.parse(readFileSync(credentialPath, "utf-8"));
