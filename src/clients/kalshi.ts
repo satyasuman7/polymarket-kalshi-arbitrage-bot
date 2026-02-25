@@ -6,7 +6,61 @@
 
 import { Configuration, MarketApi, OrdersApi, PortfolioApi } from "kalshi-typescript";
 import { MarketPrice, Trade } from "../types/market";
-import { Logger } from "../utils/logger";
+
+/**
+ * Normalize private key so Node crypto accepts it.
+ * Rebuilds PEM with strict 64-char base64 lines so Node/OpenSSL decoder accepts it.
+ * Following the pattern from Polymarket-Bot-Sample-1/src/config.ts
+ */
+function normalizePrivateKeyPem(value: string): string {
+  const PEM_HEADER = "-----BEGIN RSA PRIVATE KEY-----";
+  const PEM_FOOTER = "-----END RSA PRIVATE KEY-----";
+  
+  const trimmed = value.trim();
+  // Extract base64: remove header/footer and all whitespace
+  let base64 = trimmed
+    .replace(/-----BEGIN RSA PRIVATE KEY-----/g, "")
+    .replace(/-----END RSA PRIVATE KEY-----/g, "")
+    .replace(/\s+/g, "");
+  if (!base64) return trimmed;
+  // Rebuild PEM with exactly 64 chars per line (required by some OpenSSL/Node versions)
+  const lines: string[] = [];
+  for (let i = 0; i < base64.length; i += 64) {
+    lines.push(base64.slice(i, i + 64));
+  }
+  return `${PEM_HEADER}\n${lines.join("\n")}\n${PEM_FOOTER}`;
+}
+
+function getPrivateKeyPem(): string {
+  const raw = process.env.KALSHI_PRIVATE_KEY_PEM ?? "";
+  if (!raw) return "";
+  return normalizePrivateKeyPem(raw);
+}
+
+/**
+ * Build Kalshi configuration following exact pattern from Polymarket-Bot-Sample-1
+ */
+function buildConfiguration(): Configuration {
+  const BASE_PATHS = {
+    prod: "https://api.elections.kalshi.com/trade-api/v2",
+    demo: "https://demo-api.kalshi.co/trade-api/v2",
+  } as const;
+
+  const privateKeyPem = getPrivateKeyPem();
+  const demo = process.env.KALSHI_DEMO === "true";
+  
+  return new Configuration({
+    apiKey: process.env.KALSHI_API_KEY ?? "",
+    basePath: process.env.KALSHI_API_URL || 
+              process.env.KALSHI_BASE_PATH ||
+              (demo ? BASE_PATHS.demo : BASE_PATHS.prod),
+    ...(process.env.KALSHI_PRIVATE_KEY_PATH
+      ? { privateKeyPath: process.env.KALSHI_PRIVATE_KEY_PATH }
+      : privateKeyPem
+        ? { privateKeyPem }
+        : {}),
+  });
+}
 
 export class KalshiClient {
   private config: Configuration;
@@ -15,15 +69,12 @@ export class KalshiClient {
   private portfolioApi: PortfolioApi;
 
   constructor(apiKey?: string) {
-    // Build configuration following sample repository pattern
+    // Build configuration following exact sample repository pattern
+    // Override API key if provided, otherwise use env var
+    const baseConfig = buildConfiguration();
     this.config = new Configuration({
-      apiKey: apiKey || process.env.KALSHI_API_KEY,
-      basePath: process.env.KALSHI_API_URL || "https://trading-api.kalshi.com/trade-api/v2",
-      ...(process.env.KALSHI_PRIVATE_KEY_PATH
-        ? { privateKeyPath: process.env.KALSHI_PRIVATE_KEY_PATH }
-        : process.env.KALSHI_PRIVATE_KEY_PEM
-          ? { privateKeyPem: process.env.KALSHI_PRIVATE_KEY_PEM }
-          : {}),
+      ...baseConfig,
+      ...(apiKey ? { apiKey } : {}),
     });
 
     // Initialize API clients
@@ -31,7 +82,7 @@ export class KalshiClient {
     this.ordersApi = new OrdersApi(this.config);
     this.portfolioApi = new PortfolioApi(this.config);
 
-    Logger.info("[Kalshi] Client initialized");
+    console.log("[INFO] [Kalshi] Client initialized");
   }
 
   /**
@@ -52,8 +103,8 @@ export class KalshiClient {
       const upPrice = market.yes_ask || market.yes_bid || 50;
       const downPrice = market.no_ask || market.no_bid || 50;
 
-      // Get betted price if available
-      const bettedPrice = market.betted_price || undefined;
+      // Get betted price if available (may not exist on Market type)
+      const bettedPrice = (market as any).betted_price || undefined;
 
       return {
         upPrice,
@@ -62,7 +113,7 @@ export class KalshiClient {
         timestamp: Date.now(),
       };
     } catch (error) {
-      Logger.error(`[Kalshi] Error fetching market ${marketId}:`, error);
+      console.log(`[ERROR] [Kalshi] Error fetching market ${marketId}:`, error);
       throw error;
     }
   }
@@ -77,22 +128,24 @@ export class KalshiClient {
       let cursor: string | undefined;
       let pageSize: number;
 
-      // Fetch markets with pagination following sample repository pattern
+      // Fetch markets with pagination - exact match to Polymarket-Bot-Sample-1/src/bot.ts
+      // Using KXBTC15M series ticker as per reference implementation
       do {
         const response = await this.marketApi.getMarkets(
-          200, // page size
+          200,
           cursor,
-          undefined, // event_ticker
-          "BTC-15M", // series_ticker for BTC 15m markets
-          undefined, // max_close_ts
-          undefined, // min_close_ts
-          undefined, // status
-          undefined, // tickers
-          undefined, // limit
-          undefined, // cursor
-          "open", // status filter
-          undefined, // exchange_status
-          undefined  // limit
+          undefined,
+          "KXBTC15M", // BTC_SERIES_TICKER from sample
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "open", // Use string literal to match sample exactly
+          undefined,
+          undefined
         );
 
         const markets = response.data.markets || [];
@@ -106,7 +159,7 @@ export class KalshiClient {
 
       return allMarkets;
     } catch (error) {
-      Logger.error("[Kalshi] Error fetching BTC markets:", error);
+      console.log("[ERROR] [Kalshi] Error fetching BTC markets:", error);
       throw error;
     }
   }
@@ -121,23 +174,22 @@ export class KalshiClient {
       // Validate and clamp price (Kalshi uses 1-99 cents)
       const price = Math.max(1, Math.min(99, maxPrice));
 
-      // Create order following sample repository pattern
-      const response = await this.ordersApi.createOrder({
+      // Create order following exact sample repository pattern
+      const orderRequest: any = {
         ticker: marketId,
         side,
         action: "buy",
         count: amount,
-        type: "limit",
+        type: "limit", // Explicitly set limit order type as in sample
         time_in_force: "good_till_canceled",
         ...(side === "yes" ? { yes_price: price } : { no_price: price }),
-      });
+      };
+      const response = await this.ordersApi.createOrder(orderRequest);
 
       const order = response.data.order;
       const orderId = order?.order_id || "unknown";
 
-      Logger.info(
-        `[Kalshi] Order placed: ${orderId} ticker=${marketId} side=${side} count=${amount} price=${price}c`
-      );
+      console.log(`[INFO] [Kalshi] Order placed: ${orderId} ticker=${marketId} side=${side} count=${amount} price=${price}c`);
 
       // Map response to Trade interface
       return {
@@ -148,12 +200,12 @@ export class KalshiClient {
         amount,
         price: maxPrice,
         timestamp: Date.now(),
-        status: order?.status === 'filled' ? 'filled' : 'pending',
+        status: (order?.status as string) === 'filled' ? 'filled' : 'pending',
         txHash: orderId, // Kalshi uses order ID as transaction identifier
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      Logger.error(`[Kalshi] Error buying token: ${errorMsg}`);
+      console.log(`[ERROR] [Kalshi] Error buying token: ${errorMsg}`);
       throw error;
     }
   }
@@ -171,9 +223,9 @@ export class KalshiClient {
         return false;
       }
 
-      return market.status === 'resolved';
+      return (market.status as string) === 'resolved';
     } catch (error) {
-      Logger.error(`[Kalshi] Error checking market resolution:`, error);
+      console.log(`[ERROR] [Kalshi] Error checking market resolution:`, error);
       return false;
     }
   }
@@ -191,16 +243,16 @@ export class KalshiClient {
       // Check if market is resolved first
       const isResolved = await this.isMarketResolved(marketId);
       if (!isResolved) {
-        Logger.warn(`[Kalshi] Market ${marketId} is not resolved yet`);
+        console.log(`[WARNING] [Kalshi] Market ${marketId} is not resolved yet`);
         return false;
       }
 
       // Kalshi typically auto-settles positions, but we can check positions
       // For now, return true if market is resolved (assuming auto-settlement)
-      Logger.info(`[Kalshi] Market ${marketId} is resolved - assuming auto-settlement`);
+      console.log(`[INFO] [Kalshi] Market ${marketId} is resolved - assuming auto-settlement`);
       return true;
     } catch (error) {
-      Logger.error(`[Kalshi] Error redeeming tokens:`, error);
+      console.log(`[ERROR] [Kalshi] Error redeeming tokens:`, error);
       return false;
     }
   }
@@ -215,8 +267,9 @@ export class KalshiClient {
       const balanceResponse = await this.portfolioApi.getBalance();
       
       // Get portfolio positions
-      // Note: Kalshi API structure may vary - this is a placeholder
-      const positions = balanceResponse.data.positions || [];
+      // Note: Kalshi API structure may vary - positions may be in a different endpoint
+      // For now, return empty array as positions endpoint structure is unclear
+      const positions = (balanceResponse.data as any).positions || [];
       
       return positions.map((pos: any) => ({
         marketId: pos.ticker || pos.market_id,
@@ -225,7 +278,7 @@ export class KalshiClient {
         status: pos.status || 'active',
       }));
     } catch (error) {
-      Logger.error('[Kalshi] Error fetching positions:', error);
+      console.log('[ERROR] [Kalshi] Error fetching positions:', error);
       return [];
     }
   }
