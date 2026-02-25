@@ -1,23 +1,36 @@
 import { ApiKeyCreds, ClobClient } from "@polymarket/clob-client";
-import { writeFileSync, existsSync, mkdirSync } from "fs";
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { Wallet } from "@ethersproject/wallet";
-import { Logger } from "../utils/logger";
 import { config } from "../utils/config";
 
 /**
  * Create or load Polymarket API credentials
  * Following the pattern from sample repositories
+ * Checks if credentials already exist before creating new ones
  */
 export async function createCredential(): Promise<ApiKeyCreds | null> {
     const privateKey = process.env.PRIVATE_KEY;
     if (!privateKey) {
-        Logger.error("PRIVATE_KEY not found");
+        console.log("[ERROR] PRIVATE_KEY not found");
         return null;
+    }
+
+    // Check if credentials already exist
+    const credentialPath = resolve(process.cwd(), "src/data/credential.json");
+    if (existsSync(credentialPath)) {
+        try {
+            const existingCreds = JSON.parse(readFileSync(credentialPath, "utf-8"));
+            console.log("[INFO] Credentials already exist. Using existing credentials.");
+            return existingCreds;
+        } catch (error) {
+            console.log("[WARNING] Failed to read existing credentials, creating new ones...");
+        }
     }
 
     try {
         const wallet = new Wallet(privateKey);
+        console.log(`[INFO] Creating credentials for wallet address: ${wallet.address}`);
         const chainId = config.chain.chainId;
         const host = config.clob.apiUrl;
         
@@ -26,10 +39,10 @@ export async function createCredential(): Promise<ApiKeyCreds | null> {
         const credential = await clobClient.createOrDeriveApiKey();
         
         await saveCredential(credential);
-        Logger.info("Credential created successfully");
+        console.log("[INFO] Credential created successfully");
         return credential;
     } catch (error) {
-        Logger.error(`Error creating credential: ${error instanceof Error ? error.message : String(error)}`);
+        console.log(`[ERROR] Error creating credential: ${error instanceof Error ? error.message : String(error)}`);
         return null;
     }
 }   
