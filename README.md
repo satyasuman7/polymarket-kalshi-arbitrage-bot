@@ -75,45 +75,8 @@ See setup instructions below for complete environment variable list.
 
 ---
 
-## Directory Structure
 
-```
-src/
-├── clients/
-│   ├── polymarket.ts    # Polymarket API client (refactored to use @polymarket/clob-client)
-│   └── kalshi.ts        # Kalshi API client (refactored to use kalshi-typescript SDK)
-│
-├── core/
-│   ├── arbitrage.ts     # Arbitrage opportunity detection logic (UNCHANGED)
-│   ├── trader.ts        # Trade execution logic (UNCHANGED)
-│   ├── redeemer.ts      # Automatic redemption after market resolution (UNCHANGED)
-│   └── marketMatcher.ts # Matches markets between Polymarket and Kalshi (UNCHANGED)
-│
-├── providers/
-│   └── clobclient.ts    # Cached CLOB client provider (NEW)
-│
-├── security/
-│   └── createCredential.ts # Polymarket credential creation (NEW)
-│
-├── types/
-│   └── market.ts        # TypeScript type definitions for market data
-│
-├── utils/
-│   ├── logger.ts         # Structured logging utility
-│   ├── errors.ts         # Custom error classes
-│   └── config.ts          # Centralized configuration (NEW)
-│
-├── config/
-│   └── config.ts         # Configuration management (legacy, may be deprecated)
-│
-└── index.ts              # Main bot entry point and orchestrator
-```
----
-
-    
-
-
-### How To Run
+## How To Run
 1. Environment Variables Settings
    
    Copy the example environment file:
@@ -174,49 +137,47 @@ src/
    ```
 
 6. Run the bot:
-   ```bash
-   npm start
-   ```
-   Or for development mode:
-   ```bash
-   npm run dev
-   ```
+- **`npm run run`** – Run the main script (e.g. fetch balance via REST).
+- **`npm run bot`** – Run the Bitcoin up/down trading bot (see below).
+- **`npm run monitor`** – Run real-time price monitor for UP/DOWN best bid/ask (see below).
+- **`npm start`** – Start the Express server (default port 5000).
+- **`npm run build`** – Compile TypeScript to `dist/`.
 
 
 
-### Bot Workflow
-#### Price Monitoring
+## Bot Workflow
+### Price Monitoring
 * Continuously monitors UP and DOWN token prices on both Polymarket and Kalshi
 * Matches 15-minute BTC markets between platforms based on end times
 * Updates prices every 5 seconds (configurable)
 
-#### Arbitrage Detection
+### Arbitrage Detection
 * Detects opportunities when: poly_up_price + kalshi_down_price < take_profit (configurable, default 90)
 * Detects opportunities when: poly_down_price + kalshi_up_price < take_profit (configurable, default 90)
 * Calculates profit potential for each opportunity
 * Applies business logic to determine if trade should proceed or skip
 
-#### Trade Execution
+### Trade Execution
 * Executes trades when profitable opportunities are detected
 * Manages position sizes based on available balance and risk settings
 * Tracks all active positions across both platforms
 
-#### Automatic Redemption
+### Automatic Redemption
 * Monitors market resolution status every minute
 * Automatically redeems winning tokens after markets resolve
 * Updates position status to 'redeemed' after successful redemption
 
 
 
-### Arbitrage Logic
-#### When Both Cases Match
+## Arbitrage Logic
+### When Both Cases Match
 If both `poly_up + kalshi_down < take_profit` and `poly_down + kalshi_up < take_profit`:
 - Compare betted prices between platforms
 - If kalshi_betted > poly_betted: Buy Kalshi DOWN + Polymarket UP
 - If kalshi_betted < poly_betted: Buy Kalshi UP + Polymarket DOWN
 - This handles cases where final price falls between the two betted prices
 
-#### When Only One Case Matches
+### When Only One Case Matches
 **Case 1: poly_up + kalshi_down < take_profit**
 - If poly_betted < kalshi_betted: Proceed with trade
 - If poly_betted >= kalshi_betted: Skip (risk of loss)
